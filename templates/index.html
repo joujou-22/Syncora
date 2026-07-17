@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Syncora</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <main>
+      <video id="screen" autoplay playsinline muted></video>
+      <img id="fallback" alt="Shared computer screen">
+      <div id="status" role="status">Connecting…</div>
+      <button id="fullscreen" type="button">Full screen</button>
+      <button id="sound" type="button">Enable sound</button>
+    </main>
+    <script src="{{ url_for('static', filename='client.js') }}"></script>
+  </body>
+</html>
