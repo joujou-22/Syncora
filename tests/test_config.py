@@ -22,13 +22,23 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.scale, 0.5)
 
     def test_command_line_overrides_environment(self):
-        config = parse_config(["--port", "9090"], {"SYNCORA_PORT": "8081"})
+        config = parse_config(
+            ["--port", "9090", "--extend", "--virtual-resolution", "1920x1080"],
+            {"SYNCORA_PORT": "8081"},
+        )
         self.assertEqual(config.port, 9090)
+        self.assertTrue(config.extend)
+        self.assertEqual(config.virtual_resolution, "1920x1080")
 
     def test_invalid_ranges_are_rejected(self):
         for config in (Config(port=0), Config(fps=0), Config(jpeg_quality=100), Config(scale=2)):
             with self.subTest(config=config), self.assertRaises(ConfigError):
                 config.validate()
+
+    def test_invalid_virtual_resolution_is_rejected(self):
+        for resolution in ("1080p", "0x720", "320x200", "99999x1080"):
+            with self.subTest(resolution=resolution), self.assertRaises(ConfigError):
+                Config(virtual_resolution=resolution).validate()
 
     def test_non_numeric_environment_value_is_rejected(self):
         with self.assertRaisesRegex(ConfigError, "SYNCORA_PORT must be a number"):

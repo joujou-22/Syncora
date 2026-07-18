@@ -101,6 +101,12 @@ def main() -> int:
     app = create_app(config, producer, rtc)
     display_host = local_ip() if config.host in {"0.0.0.0", "::"} else config.host
     print(f"Syncora is ready: http://{display_host}:{config.port}", flush=True)
+    if config.extend:
+        print(
+            f"Extended mode: a {config.virtual_resolution} virtual display will be created "
+            "when the first viewer connects.",
+            flush=True,
+        )
     print("Open this address on a device connected to the same local network.", flush=True)
     try:
         app.run(**config.server_options())

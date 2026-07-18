@@ -10,7 +10,7 @@ import urllib.request
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 
 
-async def check(base_url: str) -> None:
+async def check(base_url: str, video_only: bool = False) -> None:
     peer = RTCPeerConnection(RTCConfiguration(iceServers=[]))
     video_ready: asyncio.Future = asyncio.get_running_loop().create_future()
     audio_ready: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -41,12 +41,13 @@ async def check(base_url: str) -> None:
         track = await asyncio.wait_for(video_ready, timeout=15)
         frame = await asyncio.wait_for(track.recv(), timeout=20)
         print(f"WebRTC frame received: {frame.width}x{frame.height}, pts={frame.pts}")
-        audio_track = await asyncio.wait_for(audio_ready, timeout=15)
-        audio_frame = await asyncio.wait_for(audio_track.recv(), timeout=20)
-        print(
-            f"WebRTC audio received: {audio_frame.sample_rate} Hz, "
-            f"{audio_frame.layout.name}, {audio_frame.samples} samples"
-        )
+        if not video_only:
+            audio_track = await asyncio.wait_for(audio_ready, timeout=15)
+            audio_frame = await asyncio.wait_for(audio_track.recv(), timeout=20)
+            print(
+                f"WebRTC audio received: {audio_frame.sample_rate} Hz, "
+                f"{audio_frame.layout.name}, {audio_frame.samples} samples"
+            )
     finally:
         await peer.close()
 
@@ -54,8 +55,9 @@ async def check(base_url: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("url", nargs="?", default="http://127.0.0.1:8080")
+    parser.add_argument("--video-only", action="store_true")
     args = parser.parse_args()
-    asyncio.run(check(args.url))
+    asyncio.run(check(args.url, video_only=args.video_only))
 
 
 if __name__ == "__main__":

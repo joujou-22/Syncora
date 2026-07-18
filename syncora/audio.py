@@ -58,6 +58,9 @@ class SystemAudioProducer:
     """Capture PCM chunks from the default speaker monitor on one thread."""
 
     def __init__(self) -> None:
+        # PyGObject's importer is not thread-safe during its first import. Load
+        # GStreamer before capture threads can start concurrently on Wayland.
+        self._Gst = _gstreamer()
         self._frames: queue.Queue[AudioFrame] = queue.Queue(maxsize=10)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -108,7 +111,7 @@ class SystemAudioProducer:
             self._frames.put_nowait(frame)
 
     def _run(self) -> None:
-        Gst = _gstreamer()
+        Gst = self._Gst
         Gst.init(None)
         pipeline = None
         try:

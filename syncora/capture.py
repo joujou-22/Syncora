@@ -12,6 +12,7 @@ import mss
 from PIL import Image
 
 from .config import Config
+from .display import capture_kde_virtual_display, virtual_display_for
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +30,9 @@ class FrameProducer:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._mjpeg_enabled = False
+        self._virtual_display = (
+            virtual_display_for(config.virtual_resolution) if config.extend else None
+        )
 
     @property
     def error(self) -> str | None:
@@ -39,6 +43,8 @@ class FrameProducer:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
+        if self._virtual_display:
+            self._virtual_display.start()
         self._thread = threading.Thread(target=self._run, name="syncora-capture", daemon=True)
         self._thread.start()
 
@@ -48,6 +54,8 @@ class FrameProducer:
             self._condition.notify_all()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        if self._virtual_display:
+            self._virtual_display.stop()
 
     def enable_mjpeg(self) -> None:
         """Enable JPEG encoding only when a compatibility client needs it."""
@@ -76,6 +84,14 @@ class FrameProducer:
 
     def _run(self) -> None:
         try:
+            if self._virtual_display:
+                capture_kde_virtual_display(
+                    self._virtual_display,
+                    self._stop_event,
+                    self.config.fps,
+                    self._publish_image,
+                )
+                return
             if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
                 from .wayland import capture_wayland
 

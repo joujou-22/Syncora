@@ -6,6 +6,13 @@ from syncora.audio import AUDIO_RATE, SystemAudioProducer, default_monitor
 
 
 class AudioProducerTests(unittest.TestCase):
+    def setUp(self):
+        device_patch = patch.dict(
+            "os.environ", {"SYNCORA_AUDIO_DEVICE": "test.monitor"}
+        )
+        device_patch.start()
+        self.addCleanup(device_patch.stop)
+
     def test_audio_device_can_be_overridden_without_system_lookup(self):
         with patch.dict("os.environ", {"SYNCORA_AUDIO_DEVICE": "custom.monitor"}):
             self.assertEqual(default_monitor(), "custom.monitor")

@@ -47,6 +47,24 @@ source .venv/bin/activate.fish
 
 On Wayland, the desktop displays a system screen-selection dialog when the first viewer opens the stream. Select the monitor to share and approve the request. Syncora never bypasses this security dialog. On the receiving device, press **Enable sound** once; browsers require this interaction before playing audio.
 
+### Experimental extended display on KDE Wayland
+
+Install KDE's virtual-monitor helper (Debian/Ubuntu):
+
+```bash
+sudo apt install krfb
+```
+
+Then start Syncora in extended mode:
+
+```bash
+python -m syncora.server --extend --virtual-resolution 1280x720
+```
+
+Plasma treats **Virtual-Syncora** as a real additional monitor: arrange it in Display Configuration and move windows onto it. Syncora captures this output automatically through the helper's local RFB stream, so the KDE screen-selection dialog is not used in extended mode. The output exists only while Syncora is running and is removed on shutdown.
+
+This first KDE backend uses `krfb-virtualmonitor`, which also opens a temporary VNC listener because the KDE helper does not provide a capture-only mode. Syncora protects it with a new random password on every run and never exposes that password, but extended mode should still be used only on a trusted local network.
+
 If automatic address detection does not find the correct interface, find the PC address with:
 
 ```bash
@@ -70,6 +88,8 @@ python -m syncora.server --port 8080 --fps 15 --quality 75 --scale 1.0
 - `--host`: listening address; the default `0.0.0.0` is required for LAN access
 
 Equivalent environment variables are `SYNCORA_HOST`, `SYNCORA_PORT`, `SYNCORA_FPS`, `SYNCORA_JPEG_QUALITY`, and `SYNCORA_SCALE`. Command-line values take precedence.
+
+Extended-mode environment variables are `SYNCORA_EXTEND` and `SYNCORA_VIRTUAL_RESOLUTION`.
 
 The system audio monitor is detected from the default output with `pactl`. It can be overridden when needed:
 
@@ -100,7 +120,7 @@ There is currently **no authentication or encryption**. Anyone who can reach the
 
 ## Current limitations
 
-- Mirrors only the primary physical monitor; it is not an extended display.
+- Extended display is currently experimental and limited to KDE Plasma on Wayland. Other desktops continue to use screen mirroring.
 - No input forwarding, access control, or TLS encryption. Audio captures the default system output; switching output devices while streaming may require restarting Syncora.
 - WebRTC encoding currently uses the software codecs available through `aiortc`; high-resolution capture can therefore consume noticeable CPU. Older TV browsers fall back to the slower MJPEG stream.
 - Wayland requires a working `xdg-desktop-portal` ScreenCast backend and PipeWire. Most current KDE and GNOME distributions provide one, but minimal distributions may require an additional desktop-specific portal package.
@@ -115,7 +135,7 @@ There is currently **no authentication or encryption**. Anyone who can reach the
 - More audio controls and automatic output-device switching
 - Android TV and other platform applications
 - Windows and macOS support
-- A true extended virtual display
+- Extended-display backends for GNOME, X11, Windows, and macOS
 
 ## License
 
