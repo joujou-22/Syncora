@@ -2,7 +2,7 @@
 
 > **Wireless screens, made simple.**
 
-Syncora is an open-source experiment for displaying a computer screen on another device over a local network. The current version mirrors the primary screen and system output audio over low-latency WebRTC, with MJPEG video as a compatibility fallback. It does **not** create an extended virtual display.
+Syncora is an open-source experiment for displaying a computer screen on another device over a local network. It mirrors a screen and system output audio over WebRTC, with MJPEG video as a compatibility fallback. An experimental KDE Wayland backend can also create a true extended virtual display.
 
 ## Requirements
 
@@ -49,11 +49,18 @@ On Wayland, the desktop displays a system screen-selection dialog when the first
 
 ### Experimental extended display on KDE Wayland
 
-Install KDE's virtual-monitor helper (Debian/Ubuntu):
+For the low-latency direct PipeWire backend, install the build dependencies (Debian/Ubuntu):
 
 ```bash
-sudo apt install krfb
+sudo apt install cmake pkg-config libwayland-dev plasma-wayland-protocols
+cmake -S native/kde-virtual-monitor -B native/kde-virtual-monitor/build \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build native/kde-virtual-monitor/build --parallel
+cmake --install native/kde-virtual-monitor/build
+kbuildsycoca6 --noincremental
 ```
+
+Make sure `$HOME/.local/bin` is in `PATH`. If the direct helper is unavailable, Syncora can fall back to `krfb-virtualmonitor` from the `krfb` package.
 
 Then start Syncora in extended mode:
 
@@ -61,9 +68,9 @@ Then start Syncora in extended mode:
 python -m syncora.server --extend --virtual-resolution 1280x720
 ```
 
-Plasma treats **Virtual-Syncora** as a real additional monitor: arrange it in Display Configuration and move windows onto it. Syncora captures this output automatically through the helper's local RFB stream, so the KDE screen-selection dialog is not used in extended mode. The output exists only while Syncora is running and is removed on shutdown.
+Plasma treats **Virtual-Syncora** as a real additional monitor: arrange it in Display Configuration and move windows onto it. Syncora captures its PipeWire node directly, so the KDE screen-selection dialog is not used in extended mode. The output exists only while Syncora is running and is removed on shutdown.
 
-This first KDE backend uses `krfb-virtualmonitor`, which also opens a temporary VNC listener because the KDE helper does not provide a capture-only mode. Syncora protects it with a new random password on every run and never exposes that password, but extended mode should still be used only on a trusted local network.
+The legacy KRFB fallback opens a temporary VNC listener. Syncora protects it with a new random password on every run and never exposes that password, but it should only be used on a trusted local network.
 
 If automatic address detection does not find the correct interface, find the PC address with:
 
@@ -78,16 +85,17 @@ Use the private LAN address (commonly beginning with `192.168.` or `10.`), follo
 Command-line flags are the simplest way to adjust capture:
 
 ```bash
-python -m syncora.server --port 8080 --fps 15 --quality 75 --scale 1.0
+python -m syncora.server --port 8080 --fps 15 --video-bitrate 6 --quality 75 --scale 1.0
 ```
 
 - `--fps`: 1–30 frames per second
+- `--video-bitrate`: WebRTC target bitrate in Mbps, from 0.5–50 (default: 6)
 - `--quality`: JPEG quality from 1–95
 - `--scale`: resize factor from 0.1–1.0 (try `0.5` on a slow network)
 - `--port`: TCP port from 1–65535
 - `--host`: listening address; the default `0.0.0.0` is required for LAN access
 
-Equivalent environment variables are `SYNCORA_HOST`, `SYNCORA_PORT`, `SYNCORA_FPS`, `SYNCORA_JPEG_QUALITY`, and `SYNCORA_SCALE`. Command-line values take precedence.
+Equivalent environment variables are `SYNCORA_HOST`, `SYNCORA_PORT`, `SYNCORA_FPS`, `SYNCORA_VIDEO_BITRATE`, `SYNCORA_JPEG_QUALITY`, and `SYNCORA_SCALE`. Command-line values take precedence.
 
 Extended-mode environment variables are `SYNCORA_EXTEND` and `SYNCORA_VIRTUAL_RESOLUTION`.
 
@@ -122,7 +130,7 @@ There is currently **no authentication or encryption**. Anyone who can reach the
 
 - Extended display is currently experimental and limited to KDE Plasma on Wayland. Other desktops continue to use screen mirroring.
 - No input forwarding, access control, or TLS encryption. Audio captures the default system output; switching output devices while streaming may require restarting Syncora.
-- WebRTC encoding currently uses the software codecs available through `aiortc`; high-resolution capture can therefore consume noticeable CPU. Older TV browsers fall back to the slower MJPEG stream.
+- WebRTC currently uses software VP8. High resolutions can consume noticeable CPU and add latency. Older TV browsers fall back to the slower MJPEG stream.
 - Wayland requires a working `xdg-desktop-portal` ScreenCast backend and PipeWire. Most current KDE and GNOME distributions provide one, but minimal distributions may require an additional desktop-specific portal package.
 - The Flask development server is appropriate for a local prototype, not for Internet exposure.
 - Browser full-screen support varies on smart TVs and may require remote-control interaction.

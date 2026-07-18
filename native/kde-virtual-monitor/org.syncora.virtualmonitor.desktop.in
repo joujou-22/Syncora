@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Syncora Virtual Monitor
+Comment=Creates a KDE virtual display for Syncora
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/syncora-kde-virtual-monitor
+NoDisplay=true
+X-KDE-Wayland-Interfaces=zkde_screencast_unstable_v1

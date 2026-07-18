@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import select
 import shutil
 import socket
 import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from PIL import Image
 
@@ -27,6 +29,22 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _find_direct_helper() -> str | None:
+    """Find the KDE helper even when Fish does not include ~/.local/bin in PATH."""
+    candidates = [
+        shutil.which("syncora-kde-virtual-monitor"),
+        str(Path.home() / ".local/bin/syncora-kde-virtual-monitor"),
+        str(
+            Path(__file__).resolve().parents[1]
+            / "native/kde-virtual-monitor/build/syncora-kde-virtual-monitor"
+        ),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 class KDEVirtualDisplay:
     """Keep a KWin virtual output alive through krfb-virtualmonitor."""
 
@@ -39,16 +57,29 @@ class KDEVirtualDisplay:
         self.resolution = resolution
         self.name = name
         self.scale = scale
-        self.port = _free_port()
+        self.port: int | None = None
         self.password = secrets.token_urlsafe(32)
+        self.pipewire_node: int | None = None
+        self._direct = False
         self._process: subprocess.Popen | None = None
 
     def command(self) -> list[str]:
+        direct = _find_direct_helper()
+        if direct:
+            try:
+                width, height = self.resolution.split("x", 1)
+            except ValueError as exc:
+                raise VirtualDisplayError("virtual resolution must use WIDTHxHEIGHT") from exc
+            self._direct = True
+            return [direct, self.name, width, height]
+
         executable = shutil.which("krfb-virtualmonitor")
         if not executable:
             raise VirtualDisplayError(
-                "extended mode on KDE needs krfb-virtualmonitor (install the krfb package)"
+                "extended mode on KDE needs syncora-kde-virtual-monitor or krfb-virtualmonitor"
             )
+        self._direct = False
+        self.port = _free_port()
         return [
             executable,
             "--resolution",
@@ -71,25 +102,41 @@ class KDEVirtualDisplay:
         desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
         if "kde" not in desktop:
             raise VirtualDisplayError("this extended-screen backend currently supports KDE Plasma only")
+        command = self.command()
         self._process = subprocess.Popen(
-            self.command(),
+            command,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if self._direct else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if self._direct else subprocess.DEVNULL,
+            text=self._direct,
+            bufsize=1,
             start_new_session=True,
         )
-        time.sleep(0.8)
+        if self._direct:
+            assert self._process.stdout is not None
+            readable, _, _ = select.select([self._process.stdout], [], [], 5.0)
+            if not readable:
+                self.stop()
+                raise VirtualDisplayError("KWin did not create the direct PipeWire display")
+            line = self._process.stdout.readline().strip()
+            try:
+                self.pipewire_node = int(line)
+            except ValueError as exc:
+                details = ""
+                if self._process.stderr is not None and self._process.poll() is not None:
+                    details = self._process.stderr.read().strip()
+                self.stop()
+                raise VirtualDisplayError(details or "invalid PipeWire node from KDE helper") from exc
+        else:
+            time.sleep(0.8)
         return_code = self._process.poll()
         if return_code is not None:
             self._process = None
             raise VirtualDisplayError(
                 f"krfb-virtualmonitor stopped during startup (exit code {return_code})"
             )
-        LOGGER.info(
-            "Virtual display Virtual-%s (%s) is ready and captured through local RFB",
-            self.name,
-            self.resolution,
-        )
+        backend = "PipeWire directly" if self._direct else "local RFB fallback"
+        LOGGER.info("Virtual display Virtual-%s (%s) is ready via %s", self.name, self.resolution, backend)
 
     def stop(self) -> None:
         process, self._process = self._process, None
@@ -121,23 +168,38 @@ def capture_kde_virtual_display(
         gi.require_version("Gst", "1.0")
         from gi.repository import Gst
     except (ImportError, ValueError) as exc:
-        raise VirtualDisplayError("extended mode needs GStreamer's RFB plugin") from exc
+        raise VirtualDisplayError("extended mode needs the GStreamer PipeWire or RFB plugin") from exc
 
     Gst.init(None)
-    pipeline = Gst.parse_launch(
-        f"rfbsrc name=source ! videorate ! "
-        f"video/x-raw,framerate={max(1, round(fps))}/1 ! "
-        "videoconvert ! video/x-raw,format=RGB ! "
-        "appsink name=sink sync=false max-buffers=1 drop=true"
-    )
+    if display.pipewire_node is not None:
+        pipeline = Gst.parse_launch(
+            "pipewiresrc name=source ! "
+            "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! "
+            "videorate drop-only=true ! "
+            f"video/x-raw,framerate={max(1, round(fps))}/1 ! "
+            "videoconvert ! video/x-raw,format=RGB ! "
+            "appsink name=sink sync=false max-buffers=1 drop=true"
+        )
+    else:
+        pipeline = Gst.parse_launch(
+            f"rfbsrc name=source ! videorate ! "
+            f"video/x-raw,framerate={max(1, round(fps))}/1 ! "
+            "videoconvert ! video/x-raw,format=RGB ! "
+            "appsink name=sink sync=false max-buffers=1 drop=true"
+        )
     source = pipeline.get_by_name("source")
-    source.set_property("host", "127.0.0.1")
-    source.set_property("port", display.port)
-    source.set_property("password", display.password)
-    source.set_property("shared", True)
-    source.set_property("view-only", True)
-    source.set_property("do-timestamp", True)
-    source.set_property("incremental", False)
+    if display.pipewire_node is not None:
+        source.set_property("path", str(display.pipewire_node))
+        source.set_property("do-timestamp", True)
+        source.set_property("always-copy", False)
+    else:
+        source.set_property("host", "127.0.0.1")
+        source.set_property("port", display.port)
+        source.set_property("password", display.password)
+        source.set_property("shared", True)
+        source.set_property("view-only", True)
+        source.set_property("do-timestamp", True)
+        source.set_property("incremental", False)
     sink = pipeline.get_by_name("sink")
     try:
         pipeline.set_state(Gst.State.PLAYING)

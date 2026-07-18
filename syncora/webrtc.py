@@ -26,6 +26,20 @@ LOGGER = logging.getLogger(__name__)
 VIDEO_CLOCK_RATE = 90_000
 
 
+def configure_video_bitrate(megabits_per_second: float) -> int:
+    """Raise aiortc's conservative software-encoder limits for LAN screen sharing."""
+    from aiortc.codecs import h264, vpx
+
+    bitrate = round(megabits_per_second * 1_000_000)
+    # aiortc reads these module defaults when it lazily constructs an encoder.
+    # Keep congestion-control feedback active: its target setter can still
+    # lower the bitrate, while the higher maximum removes the 1.5 Mbps VP8 cap.
+    for codec in (vpx, h264):
+        codec.DEFAULT_BITRATE = bitrate
+        codec.MAX_BITRATE = max(codec.MAX_BITRATE, bitrate)
+    return bitrate
+
+
 class ScreenVideoTrack(VideoStreamTrack):
     """Expose the newest captured image without building a frame queue."""
 
@@ -83,6 +97,8 @@ class WebRTCManager:
         audio: SystemAudioProducer | None = None,
     ) -> None:
         self.producer = producer
+        bitrate = configure_video_bitrate(producer.config.video_bitrate_mbps)
+        LOGGER.info("WebRTC video target bitrate: %.1f Mbps", bitrate / 1_000_000)
         self.audio = audio or SystemAudioProducer()
         self._audio_source = SystemAudioTrack(self.audio)
         self._audio_relay = MediaRelay()
@@ -121,8 +137,11 @@ class WebRTCManager:
                 self._peers.discard(peer)
 
         try:
-            await peer.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=offer_type))
+            await peer.setRemoteDescription(
+                RTCSessionDescription(sdp=sdp, type=offer_type)
+            )
             peer.addTrack(ScreenVideoTrack(self.producer))
+            LOGGER.info("WebRTC video encoder: software VP8")
             peer.addTrack(self._audio_relay.subscribe(self._audio_source))
             answer = await peer.createAnswer()
             await peer.setLocalDescription(answer)

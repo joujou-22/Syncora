@@ -8,6 +8,7 @@ class ConfigTests(unittest.TestCase):
         config = Config().validate()
         self.assertEqual(config.port, 8080)
         self.assertEqual(config.fps, 15)
+        self.assertEqual(config.video_bitrate_mbps, 6)
 
     def test_server_options_disable_debug_and_reloader(self):
         options = Config(port=9000).server_options()
@@ -17,9 +18,12 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(options["use_reloader"])
 
     def test_environment_values_are_loaded(self):
-        config = config_from_env({"SYNCORA_FPS": "5", "SYNCORA_SCALE": "0.5"})
+        config = config_from_env(
+            {"SYNCORA_FPS": "5", "SYNCORA_SCALE": "0.5", "SYNCORA_VIDEO_BITRATE": "8"}
+        )
         self.assertEqual(config.fps, 5)
         self.assertEqual(config.scale, 0.5)
+        self.assertEqual(config.video_bitrate_mbps, 8)
 
     def test_command_line_overrides_environment(self):
         config = parse_config(
@@ -31,7 +35,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.virtual_resolution, "1920x1080")
 
     def test_invalid_ranges_are_rejected(self):
-        for config in (Config(port=0), Config(fps=0), Config(jpeg_quality=100), Config(scale=2)):
+        for config in (
+            Config(port=0),
+            Config(fps=0),
+            Config(video_bitrate_mbps=0),
+            Config(jpeg_quality=100),
+            Config(scale=2),
+        ):
             with self.subTest(config=config), self.assertRaises(ConfigError):
                 config.validate()
 

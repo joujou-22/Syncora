@@ -18,6 +18,7 @@ class Config:
     host: str = "0.0.0.0"
     port: int = 8080
     fps: float = 15.0
+    video_bitrate_mbps: float = 6.0
     jpeg_quality: int = 75
     scale: float = 1.0
     extend: bool = False
@@ -30,6 +31,8 @@ class Config:
             raise ConfigError("port must be between 1 and 65535")
         if not 1 <= self.fps <= 30:
             raise ConfigError("fps must be between 1 and 30")
+        if not 0.5 <= self.video_bitrate_mbps <= 50:
+            raise ConfigError("video bitrate must be between 0.5 and 50 Mbps")
         if not 1 <= self.jpeg_quality <= 95:
             raise ConfigError("JPEG quality must be between 1 and 95")
         if not 0.1 <= self.scale <= 1.0:
@@ -69,6 +72,9 @@ def config_from_env(env: Mapping[str, str] | None = None) -> Config:
         host=values.get("SYNCORA_HOST", "0.0.0.0"),
         port=_number("SYNCORA_PORT", values.get("SYNCORA_PORT", "8080"), int),
         fps=_number("SYNCORA_FPS", values.get("SYNCORA_FPS", "15"), float),
+        video_bitrate_mbps=_number(
+            "SYNCORA_VIDEO_BITRATE", values.get("SYNCORA_VIDEO_BITRATE", "6"), float
+        ),
         jpeg_quality=_number(
             "SYNCORA_JPEG_QUALITY", values.get("SYNCORA_JPEG_QUALITY", "75"), int
         ),
@@ -84,6 +90,12 @@ def parse_config(argv: Sequence[str] | None = None, env: Mapping[str, str] | Non
     parser.add_argument("--host", default=defaults.host, help="listening address")
     parser.add_argument("--port", type=int, default=defaults.port, help="TCP port (default: 8080)")
     parser.add_argument("--fps", type=float, default=defaults.fps, help="frames per second")
+    parser.add_argument(
+        "--video-bitrate",
+        type=float,
+        default=defaults.video_bitrate_mbps,
+        help="target WebRTC video bitrate in Mbps (default: 6)",
+    )
     parser.add_argument("--quality", type=int, default=defaults.jpeg_quality, help="JPEG quality")
     parser.add_argument("--scale", type=float, default=defaults.scale, help="resize factor (0.1 to 1.0)")
     parser.add_argument(
@@ -99,6 +111,7 @@ def parse_config(argv: Sequence[str] | None = None, env: Mapping[str, str] | Non
         host=args.host,
         port=args.port,
         fps=args.fps,
+        video_bitrate_mbps=args.video_bitrate,
         jpeg_quality=args.quality,
         scale=args.scale,
         extend=args.extend,
