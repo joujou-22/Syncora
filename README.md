@@ -119,4 +119,4 @@ There is currently **no authentication or encryption**. Anyone who can reach the
 
 ## License
 
-MIT. Before publishing, replace `[YEAR]` and `[COPYRIGHT HOLDER]` in [`LICENSE`](LICENSE) with the correct details.
+Syncora is released under the [MIT License](LICENSE).
