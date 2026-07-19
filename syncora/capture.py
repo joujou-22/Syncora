@@ -39,6 +39,13 @@ class FrameProducer:
         with self._condition:
             return self._error
 
+    @property
+    def direct_pipewire_node(self) -> int | None:
+        """Return the KDE virtual display's node after it has started."""
+        if self._virtual_display is None:
+            return None
+        return self._virtual_display.pipewire_node
+
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return

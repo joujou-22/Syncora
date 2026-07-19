@@ -13,6 +13,7 @@ from aiortc import (
     MediaStreamError,
     RTCConfiguration,
     RTCPeerConnection,
+    RTCRtpSender,
     RTCSessionDescription,
     VideoStreamTrack,
 )
@@ -21,6 +22,7 @@ from av import VideoFrame
 
 from .audio import SystemAudioProducer
 from .capture import FrameProducer
+from .direct_media import DirectH264Track
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_CLOCK_RATE = 90_000
@@ -128,25 +130,45 @@ class WebRTCManager:
         self.audio.start()
         peer = RTCPeerConnection(RTCConfiguration(iceServers=[]))
         self._peers.add(peer)
+        video_track: VideoStreamTrack | None = None
 
         @peer.on("connectionstatechange")
         async def connection_state_changed() -> None:
             LOGGER.info("WebRTC connection state: %s", peer.connectionState)
             if peer.connectionState in {"failed", "closed"}:
+                if video_track is not None:
+                    video_track.stop()
                 await peer.close()
                 self._peers.discard(peer)
 
         try:
+            use_direct = DirectH264Track.available(self.producer) and "H264/90000" in sdp
+            video_track = (
+                DirectH264Track(self.producer)
+                if use_direct
+                else ScreenVideoTrack(self.producer)
+            )
+            sender = peer.addTrack(video_track)
+            if use_direct:
+                codecs = RTCRtpSender.getCapabilities("video").codecs
+                h264_codecs = [codec for codec in codecs if codec.mimeType == "video/H264"]
+                transceiver = next(
+                    item for item in peer.getTransceivers() if item.sender == sender
+                )
+                transceiver.setCodecPreferences(h264_codecs)
+                LOGGER.info("WebRTC video pipeline: direct PipeWire / VA-API H.264")
+            else:
+                LOGGER.info("WebRTC video encoder: software VP8 fallback")
+            peer.addTrack(self._audio_relay.subscribe(self._audio_source))
             await peer.setRemoteDescription(
                 RTCSessionDescription(sdp=sdp, type=offer_type)
             )
-            peer.addTrack(ScreenVideoTrack(self.producer))
-            LOGGER.info("WebRTC video encoder: software VP8")
-            peer.addTrack(self._audio_relay.subscribe(self._audio_source))
             answer = await peer.createAnswer()
             await peer.setLocalDescription(answer)
             return {"sdp": peer.localDescription.sdp, "type": peer.localDescription.type}
         except Exception:
+            if video_track is not None:
+                video_track.stop()
             self._peers.discard(peer)
             await peer.close()
             raise
