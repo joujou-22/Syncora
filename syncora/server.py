@@ -116,8 +116,11 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nStopping Syncora…")
     finally:
-        rtc.stop()
-        producer.stop()
+        try:
+            rtc.stop()
+        finally:
+            # The virtual monitor must disappear even if WebRTC shutdown times out.
+            producer.stop()
     return 0
 
 

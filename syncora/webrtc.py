@@ -104,6 +104,8 @@ class WebRTCManager:
         self.audio = audio or SystemAudioProducer()
         self._audio_source = SystemAudioTrack(self.audio)
         self._audio_relay = MediaRelay()
+        self._video_relay = MediaRelay()
+        self._direct_source: DirectH264Track | None = None
         self._peers: set[RTCPeerConnection] = set()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
@@ -126,7 +128,7 @@ class WebRTCManager:
         return future.result(timeout=20)
 
     async def _answer(self, sdp: str, offer_type: str) -> dict[str, str]:
-        self.producer.start()
+        self.producer.start_display()
         self.audio.start()
         peer = RTCPeerConnection(RTCConfiguration(iceServers=[]))
         self._peers.add(peer)
@@ -143,11 +145,16 @@ class WebRTCManager:
 
         try:
             use_direct = DirectH264Track.available(self.producer) and "H264/90000" in sdp
-            video_track = (
-                DirectH264Track(self.producer)
-                if use_direct
-                else ScreenVideoTrack(self.producer)
-            )
+            if not use_direct:
+                self.producer.start()
+            if use_direct:
+                if self._direct_source is None:
+                    self._direct_source = DirectH264Track(self.producer)
+                video_track = self._video_relay.subscribe(
+                    self._direct_source, buffered=False
+                )
+            else:
+                video_track = ScreenVideoTrack(self.producer)
             sender = peer.addTrack(video_track)
             if use_direct:
                 codecs = RTCRtpSender.getCapabilities("video").codecs
@@ -178,6 +185,9 @@ class WebRTCManager:
         peers = list(self._peers)
         self._peers.clear()
         await asyncio.gather(*(peer.close() for peer in peers), return_exceptions=True)
+        if self._direct_source is not None:
+            self._direct_source.stop()
+            self._direct_source = None
         await asyncio.sleep(0.05)
 
     def stop(self) -> None:
@@ -186,6 +196,8 @@ class WebRTCManager:
         future = asyncio.run_coroutine_threadsafe(self._close_all(), self._loop)
         try:
             future.result(timeout=5)
+        except TimeoutError:
+            LOGGER.warning("WebRTC shutdown timed out; forcing media cleanup")
         finally:
             self.audio.stop()
             self._loop.call_soon_threadsafe(self._loop.stop)

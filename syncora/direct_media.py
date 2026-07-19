@@ -6,7 +6,7 @@ import asyncio
 import logging
 from fractions import Fraction
 
-from aiortc import VideoStreamTrack
+from aiortc import MediaStreamError, VideoStreamTrack
 from av import Packet
 
 from .capture import FrameProducer
@@ -76,13 +76,16 @@ class DirectH264Track(VideoStreamTrack):
         Gst = _gstreamer()
         if self._pipeline is None:
             self._start()
-        sample = self._sink.emit("try-pull-sample", 3 * Gst.SECOND)
-        if sample is None:
+        while True:
+            sample = self._sink.emit("try-pull-sample", Gst.SECOND)
+            if sample is not None:
+                break
+            if self._pipeline is None or self.readyState != "live":
+                raise MediaStreamError
             message = self._pipeline.get_bus().pop_filtered(Gst.MessageType.ERROR)
             if message:
                 error, _debug = message.parse_error()
                 raise RuntimeError(f"direct H.264 pipeline failed: {error.message}")
-            raise RuntimeError("direct H.264 pipeline timed out")
         buffer = sample.get_buffer()
         ok, mapped = buffer.map(Gst.MapFlags.READ)
         if not ok:
@@ -105,7 +108,7 @@ class DirectH264Track(VideoStreamTrack):
 
     async def recv(self) -> Packet:
         if self.readyState != "live":
-            raise RuntimeError("direct H.264 track is no longer live")
+            raise MediaStreamError
         return await asyncio.get_running_loop().run_in_executor(None, self._pull_packet)
 
     def stop(self) -> None:
@@ -113,5 +116,4 @@ class DirectH264Track(VideoStreamTrack):
             Gst = _gstreamer()
             self._pipeline.set_state(Gst.State.NULL)
             self._pipeline = None
-            self._sink = None
         super().stop()

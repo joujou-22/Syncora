@@ -4,6 +4,7 @@
   var fallback = document.getElementById("fallback");
   var status = document.getElementById("status");
   var peer = null;
+  var remoteStream = null;
   var retryTimer = null;
 
   function setStatus(message, connected) {
@@ -27,6 +28,7 @@
   function closePeer() {
     if (peer) { peer.close(); peer = null; }
     video.srcObject = null;
+    remoteStream = null;
   }
 
   async function connectWebRTC() {
@@ -38,10 +40,14 @@
 
     var pc = new RTCPeerConnection({iceServers: []});
     peer = pc;
+    remoteStream = new MediaStream();
+    video.srcObject = remoteStream;
     pc.addTransceiver("video", {direction: "recvonly"});
     pc.addTransceiver("audio", {direction: "recvonly"});
     pc.ontrack = function (event) {
-      video.srcObject = event.streams[0] || new MediaStream([event.track]);
+      if (!remoteStream.getTracks().some(function (track) { return track.id === event.track.id; })) {
+        remoteStream.addTrack(event.track);
+      }
       video.play().catch(function () {});
       setStatus("Connected", true);
     };
