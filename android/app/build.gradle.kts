@@ -29,3 +29,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // M144 aborts in network_thread on some Android 9 armeabi-v7a TV firmware.
+    // M125 keeps modern Unified Plan/H.264 support with broader legacy runtime compatibility.
+    implementation("io.github.webrtc-sdk:android:125.6422.07")
+}

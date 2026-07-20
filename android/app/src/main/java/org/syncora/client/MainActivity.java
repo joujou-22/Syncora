@@ -13,6 +13,9 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import org.webrtc.RendererCommon;
+import org.webrtc.SurfaceViewRenderer;
+
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -26,6 +29,9 @@ public final class MainActivity extends Activity {
     private EditText address;
     private TextView status;
     private Button connect;
+    private LinearLayout form;
+    private SurfaceViewRenderer video;
+    private WebRtcPlayer player;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -36,21 +42,31 @@ public final class MainActivity extends Activity {
 
     private View createContent() {
         int padding = dp(32);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER);
-        root.setPadding(padding, padding, padding, padding);
-        root.setBackgroundColor(Color.rgb(8, 12, 20));
+        android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+        video = new SurfaceViewRenderer(this);
+        video.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
+        video.setVisibility(View.GONE);
+        root.addView(video, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+
+        form = new LinearLayout(this);
+        LinearLayout content = form;
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER);
+        content.setPadding(padding, padding, padding, padding);
+        content.setBackgroundColor(Color.rgb(8, 12, 20));
 
         TextView title = text(getString(R.string.app_name), 34, Color.WHITE);
         title.setGravity(Gravity.CENTER);
-        root.addView(title, matchWrap());
+        content.addView(title, matchWrap());
 
         TextView subtitle = text(getString(R.string.slogan), 18, Color.rgb(150, 165, 190));
         subtitle.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams subtitleParams = matchWrap();
         subtitleParams.setMargins(0, dp(8), 0, dp(32));
-        root.addView(subtitle, subtitleParams);
+        content.addView(subtitle, subtitleParams);
 
         address = new EditText(this);
         address.setSingleLine(true);
@@ -67,7 +83,7 @@ public final class MainActivity extends Activity {
             }
             return false;
         });
-        root.addView(address, new LinearLayout.LayoutParams(dp(520), dp(64)));
+        content.addView(address, new LinearLayout.LayoutParams(dp(520), dp(64)));
 
         connect = new Button(this);
         connect.setText(R.string.connect);
@@ -75,13 +91,17 @@ public final class MainActivity extends Activity {
         connect.setOnClickListener(view -> checkServer());
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(dp(260), dp(64));
         buttonParams.setMargins(0, dp(20), 0, 0);
-        root.addView(connect, buttonParams);
+        content.addView(connect, buttonParams);
 
         status = text(getString(R.string.ready), 16, Color.rgb(150, 165, 190));
         status.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams statusParams = matchWrap();
         statusParams.setMargins(0, dp(24), 0, 0);
-        root.addView(status, statusParams);
+        content.addView(status, statusParams);
+        root.addView(content, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ));
         return root;
     }
 
@@ -117,12 +137,31 @@ public final class MainActivity extends Activity {
         connect.setEnabled(true);
         if (error == null) {
             getPreferences().edit().putString(SERVER_KEY, baseUrl).apply();
-            status.setText(R.string.connected);
+            status.setText(R.string.negotiating_video);
             status.setTextColor(Color.rgb(78, 220, 150));
+            startVideo(baseUrl);
         } else {
             status.setText(error);
             status.setTextColor(Color.rgb(255, 120, 120));
         }
+    }
+
+    private void startVideo(String baseUrl) {
+        player = new WebRtcPlayer(this, video, new WebRtcPlayer.Listener() {
+            @Override
+            public void onConnected() {
+                form.setVisibility(View.GONE);
+                video.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void onError(String message) {
+                status.setText(message);
+                status.setTextColor(Color.rgb(255, 120, 120));
+                connect.setEnabled(true);
+            }
+        });
+        player.connect(baseUrl);
     }
 
     private SharedPreferences getPreferences() {
@@ -159,6 +198,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (player != null) player.release();
         networkExecutor.shutdownNow();
         super.onDestroy();
     }
