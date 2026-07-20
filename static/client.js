@@ -42,13 +42,7 @@
     peer = pc;
     remoteStream = new MediaStream();
     video.srcObject = remoteStream;
-    var videoTransceiver = pc.addTransceiver("video", {direction: "recvonly"});
-    if ("jitterBufferTarget" in videoTransceiver.receiver) {
-      videoTransceiver.receiver.jitterBufferTarget = 0;
-    }
-    if ("playoutDelayHint" in videoTransceiver.receiver) {
-      videoTransceiver.receiver.playoutDelayHint = 0;
-    }
+    pc.addTransceiver("video", {direction: "recvonly"});
     pc.addTransceiver("audio", {direction: "recvonly"});
     pc.ontrack = function (event) {
       if (!remoteStream.getTracks().some(function (track) { return track.id === event.track.id; })) {
