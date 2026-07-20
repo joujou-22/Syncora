@@ -12,6 +12,8 @@ from flask import Flask, Response, jsonify, render_template, request
 from .capture import FrameProducer
 from .config import Config, ConfigError, parse_config
 from .webrtc import WebRTCManager
+from .rtsp import DirectRtspServer
+from .udp import DirectUdpStreamer
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +35,8 @@ def create_app(
     config: Config,
     producer: FrameProducer | None = None,
     webrtc: WebRTCManager | None = None,
+    direct: DirectRtspServer | None = None,
+    udp: DirectUdpStreamer | None = None,
 ) -> Flask:
     app = Flask(
         __name__,
@@ -41,8 +45,12 @@ def create_app(
     )
     frames = producer or FrameProducer(config)
     rtc = webrtc or WebRTCManager(frames)
+    direct_server = direct or DirectRtspServer(frames)
+    udp_streamer = udp or DirectUdpStreamer(frames)
     app.extensions["syncora_frames"] = frames
     app.extensions["syncora_webrtc"] = rtc
+    app.extensions["syncora_direct"] = direct_server
+    app.extensions["syncora_udp"] = udp_streamer
 
     @app.get("/")
     def index() -> str:
@@ -85,6 +93,26 @@ def create_app(
             return jsonify(error="WebRTC negotiation failed"), 500
         return jsonify(answer)
 
+    @app.post("/direct/start")
+    def direct_start() -> tuple[Response, int] | Response:
+        payload = request.get_json(silent=True) or {}
+        try:
+            port = int(payload.get("port", 5004))
+            return jsonify(udp_streamer.start(request.remote_addr or "", port))
+        except (TypeError, ValueError) as exc:
+            return jsonify(error=str(exc)), 400
+        except Exception as exc:
+            LOGGER.exception("Could not start Syncora Direct")
+            return jsonify(error=str(exc)), 503
+
+    @app.post("/direct/rtsp/start")
+    def direct_rtsp_start() -> tuple[Response, int] | Response:
+        try:
+            return jsonify(direct_server.start())
+        except Exception as exc:
+            LOGGER.exception("Could not start Syncora Direct RTSP fallback")
+            return jsonify(error=str(exc)), 503
+
     return app
 
 
@@ -98,7 +126,9 @@ def main() -> int:
 
     producer = FrameProducer(config)
     rtc = WebRTCManager(producer)
-    app = create_app(config, producer, rtc)
+    direct = DirectRtspServer(producer)
+    udp = DirectUdpStreamer(producer)
+    app = create_app(config, producer, rtc, direct, udp)
     display_host = local_ip() if config.host in {"0.0.0.0", "::"} else config.host
     print(f"Syncora is ready: http://{display_host}:{config.port}", flush=True)
     if config.extend:
@@ -117,10 +147,16 @@ def main() -> int:
         print("\nStopping Syncora…")
     finally:
         try:
-            rtc.stop()
+            udp.stop()
         finally:
-            # The virtual monitor must disappear even if WebRTC shutdown times out.
-            producer.stop()
+            try:
+                direct.stop()
+            finally:
+                try:
+                    rtc.stop()
+                finally:
+                    # The virtual monitor must disappear even if media shutdown times out.
+                    producer.stop()
     return 0
 
 

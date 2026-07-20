@@ -7,10 +7,12 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.SurfaceView;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import org.webrtc.RendererCommon;
@@ -32,6 +34,9 @@ public final class MainActivity extends Activity {
     private LinearLayout form;
     private SurfaceViewRenderer video;
     private WebRtcPlayer player;
+    private SurfaceView directVideo;
+    private DirectRtspPlayer directPlayer;
+    private DirectUdpPlayer udpPlayer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,6 +55,12 @@ public final class MainActivity extends Activity {
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT
         ));
+        directVideo = new SurfaceView(this);
+        directVideo.setVisibility(View.GONE);
+        root.addView(directVideo, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ));
 
         form = new LinearLayout(this);
         LinearLayout content = form;
@@ -57,6 +68,14 @@ public final class MainActivity extends Activity {
         content.setGravity(Gravity.CENTER);
         content.setPadding(padding, padding, padding, padding);
         content.setBackgroundColor(Color.rgb(8, 12, 20));
+
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.syncora_logo);
+        logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(150), dp(150));
+        logoParams.gravity = Gravity.CENTER_HORIZONTAL;
+        logoParams.setMargins(0, 0, 0, dp(14));
+        content.addView(logo, logoParams);
 
         TextView title = text(getString(R.string.app_name), 34, Color.WHITE);
         title.setGravity(Gravity.CENTER);
@@ -137,13 +156,35 @@ public final class MainActivity extends Activity {
         connect.setEnabled(true);
         if (error == null) {
             getPreferences().edit().putString(SERVER_KEY, baseUrl).apply();
-            status.setText(R.string.negotiating_video);
+            status.setText(R.string.opening_direct_video);
             status.setTextColor(Color.rgb(78, 220, 150));
-            startVideo(baseUrl);
+            startDirectVideo(baseUrl);
         } else {
             status.setText(error);
             status.setTextColor(Color.rgb(255, 120, 120));
         }
+    }
+
+    private void startDirectVideo(String baseUrl) {
+        // A GONE SurfaceView has no underlying Surface, so MediaCodec cannot
+        // render the first frame that would otherwise make it visible.
+        // The opaque connection form remains above it until that first frame.
+        directVideo.setVisibility(View.VISIBLE);
+        udpPlayer = new DirectUdpPlayer(directVideo, new DirectUdpPlayer.Listener() {
+            @Override
+            public void onFirstFrame() {
+                form.setVisibility(View.GONE);
+                directVideo.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void onError(String message) {
+                status.setText(message);
+                status.setTextColor(Color.rgb(255, 120, 120));
+                connect.setEnabled(true);
+            }
+        });
+        udpPlayer.connect(baseUrl);
     }
 
     private void startVideo(String baseUrl) {
@@ -198,6 +239,8 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (directPlayer != null) directPlayer.release();
+        if (udpPlayer != null) udpPlayer.release();
         if (player != null) player.release();
         networkExecutor.shutdownNow();
         super.onDestroy();

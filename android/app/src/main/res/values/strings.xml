@@ -8,6 +8,7 @@
     <string name="connecting">Connexion…</string>
     <string name="connected">Serveur Syncora détecté ✓</string>
     <string name="negotiating_video">Serveur détecté — ouverture du flux vidéo…</string>
+    <string name="opening_direct_video">Serveur détecté — ouverture de Syncora Direct…</string>
     <string name="unreachable">Serveur introuvable. Vérifie l’adresse et le réseau.</string>
     <string name="server_error">Le serveur a répondu avec l’erreur HTTP %1$d.</string>
 </resources>
