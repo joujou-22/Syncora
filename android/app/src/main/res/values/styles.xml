@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Syncora" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#6EA8FE</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:navigationBarColor">#080C14</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>
