@@ -4,6 +4,7 @@ import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.SurfaceView;
 
 import org.json.JSONObject;
@@ -22,6 +23,7 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Minimal one-frame-queue H.264/RTP player for interactive LAN display. */
@@ -33,10 +35,14 @@ final class DirectUdpPlayer {
 
     private static final int UDP_PORT = 5004;
     private static final int UDP_RECEIVE_BUFFER_BYTES = 64 * 1024;
+    private static final String TAG = "SyncoraDirect";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService controlExecutor = Executors.newSingleThreadExecutor();
     private final AtomicReference<byte[]> latestFrame = new AtomicReference<>();
     private final AtomicBoolean firstFrame = new AtomicBoolean(false);
+    private final AtomicLong replacedFrames = new AtomicLong();
+    private final AtomicLong codecInputDrops = new AtomicLong();
+    private final AtomicBoolean metricsPending = new AtomicBoolean(false);
     private final SurfaceView surface;
     private final Listener listener;
     private volatile boolean running;
@@ -60,7 +66,7 @@ final class DirectUdpPlayer {
             socket.setReceiveBufferSize(UDP_RECEIVE_BUFFER_BYTES);
             socket.bind(new InetSocketAddress(UDP_PORT));
             running = true;
-            startReceiver();
+            startReceiver(serverUrl);
         } catch (Exception exception) {
             fail("Port UDP indisponible : " + exception.getMessage());
             return;
@@ -102,15 +108,30 @@ final class DirectUdpPlayer {
         });
     }
 
-    private void startReceiver() {
+    private void startReceiver(String serverUrl) {
         receiverThread = new Thread(() -> {
             byte[] buffer = new byte[2048];
-            RtpH264Assembler assembler = new RtpH264Assembler(latestFrame::set);
+            DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+            RtpH264Assembler assembler = new RtpH264Assembler(frame -> {
+                if (latestFrame.getAndSet(frame) != null) replacedFrames.incrementAndGet();
+            });
+            long nextReport = System.nanoTime() + 5_000_000_000L;
             while (running) {
                 try {
-                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    packet.setLength(buffer.length);
                     socket.receive(packet);
                     assembler.accept(packet.getData(), packet.getLength());
+                    if (System.nanoTime() >= nextReport) {
+                        // Some Android TV firmwares discard application INFO logs.
+                        Log.w(TAG, "rtp packets=" + assembler.packets()
+                                + " missing=" + assembler.missingPackets()
+                                + " frames=" + assembler.completedFrames()
+                                + " damaged=" + assembler.damagedFrames()
+                                + " replaced=" + replacedFrames.get()
+                                + " codecDrops=" + codecInputDrops.get());
+                        reportMetrics(serverUrl, assembler);
+                        nextReport = System.nanoTime() + 5_000_000_000L;
+                    }
                 } catch (Exception exception) {
                     if (running) fail("Réception UDP arrêtée : " + exception.getMessage());
                     return;
@@ -121,6 +142,43 @@ final class DirectUdpPlayer {
         receiverThread.start();
     }
 
+    private void reportMetrics(String serverUrl, RtpH264Assembler assembler) {
+        if (!metricsPending.compareAndSet(false, true)) return;
+        JSONObject metrics = new JSONObject();
+        try {
+            metrics.put("packets", assembler.packets());
+            metrics.put("missing", assembler.missingPackets());
+            metrics.put("frames", assembler.completedFrames());
+            metrics.put("damaged", assembler.damagedFrames());
+            metrics.put("replaced", replacedFrames.get());
+            metrics.put("codec_drops", codecInputDrops.get());
+        } catch (Exception ignored) {
+            metricsPending.set(false);
+            return;
+        }
+        controlExecutor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                byte[] body = metrics.toString().getBytes(StandardCharsets.UTF_8);
+                connection = (HttpURLConnection) new URL(serverUrl + "/direct/metrics")
+                        .openConnection();
+                connection.setConnectTimeout(1000);
+                connection.setReadTimeout(1000);
+                connection.setRequestMethod("POST");
+                connection.setRequestProperty("Content-Type", "application/json");
+                connection.setDoOutput(true);
+                connection.setFixedLengthStreamingMode(body.length);
+                try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+                connection.getResponseCode();
+            } catch (Exception ignored) {
+                // Diagnostics must never interrupt video playback.
+            } finally {
+                if (connection != null) connection.disconnect();
+                metricsPending.set(false);
+            }
+        });
+    }
+
     private void startDecoder() {
         decoderThread = new Thread(this::decodeLoop, "syncora-h264-decoder");
         decoderThread.setPriority(Thread.MAX_PRIORITY);
@@ -129,6 +187,7 @@ final class DirectUdpPlayer {
 
     private void decodeLoop() {
         MediaCodec codec = null;
+        MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
         byte[] sps = null;
         byte[] pps = null;
         try {
@@ -136,14 +195,14 @@ final class DirectUdpPlayer {
                 byte[] frame = latestFrame.getAndSet(null);
                 if (frame == null) {
                     Thread.sleep(1);
-                    if (codec != null) drain(codec);
+                    if (codec != null) drain(codec, outputInfo);
                     continue;
                 }
-                byte[] candidate = findNal(frame, 7);
-                if (candidate != null) sps = candidate;
-                candidate = findNal(frame, 8);
-                if (candidate != null) pps = candidate;
                 if (codec == null) {
+                    byte[] candidate = findNal(frame, 7);
+                    if (candidate != null) sps = candidate;
+                    candidate = findNal(frame, 8);
+                    if (candidate != null) pps = candidate;
                     if (sps == null || pps == null || !surface.getHolder().getSurface().isValid()) {
                         continue;
                     }
@@ -171,8 +230,10 @@ final class DirectUdpPlayer {
                         codec.queueInputBuffer(input, 0, 0,
                                 System.nanoTime() / 1000, 0);
                     }
+                } else {
+                    codecInputDrops.incrementAndGet();
                 }
-                drain(codec);
+                drain(codec, outputInfo);
             }
         } catch (Exception exception) {
             if (running) fail("Décodage H.264 arrêté : " + exception.getMessage());
@@ -184,8 +245,7 @@ final class DirectUdpPlayer {
         }
     }
 
-    private void drain(MediaCodec codec) {
-        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+    private void drain(MediaCodec codec, MediaCodec.BufferInfo info) {
         int newest = -1;
         while (true) {
             int output = codec.dequeueOutputBuffer(info, 0);

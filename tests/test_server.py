@@ -91,6 +91,18 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["transport"], "rtsp")
 
+    def test_direct_metrics_require_all_counters(self):
+        self.assertEqual(self.client.post("/direct/metrics", json={}).status_code, 400)
+        response = self.client.post(
+            "/direct/metrics",
+            json={
+                "packets": 100, "missing": 0, "frames": 30,
+                "damaged": 0, "replaced": 1, "codec_drops": 0,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

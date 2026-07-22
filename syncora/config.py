@@ -32,8 +32,8 @@ class Config:
             raise ConfigError("port must be between 1 and 65535")
         if not 1 <= self.rtsp_port <= 65535 or self.rtsp_port == self.port:
             raise ConfigError("RTSP port must be valid and different from the HTTP port")
-        if not 1 <= self.fps <= 30:
-            raise ConfigError("fps must be between 1 and 30")
+        if not 1 <= self.fps <= 60:
+            raise ConfigError("fps must be between 1 and 60")
         if not 0.5 <= self.video_bitrate_mbps <= 50:
             raise ConfigError("video bitrate must be between 0.5 and 50 Mbps")
         if not 1 <= self.jpeg_quality <= 95:

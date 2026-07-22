@@ -113,6 +113,19 @@ def create_app(
             LOGGER.exception("Could not start Syncora Direct RTSP fallback")
             return jsonify(error=str(exc)), 503
 
+    @app.post("/direct/metrics")
+    def direct_metrics() -> tuple[Response, int] | Response:
+        payload = request.get_json(silent=True)
+        required = ("packets", "missing", "frames", "damaged", "replaced", "codec_drops")
+        if not isinstance(payload, dict) or any(key not in payload for key in required):
+            return jsonify(error="invalid direct metrics"), 400
+        LOGGER.info(
+            "Syncora client RTP packets=%s missing=%s frames=%s damaged=%s "
+            "replaced=%s codec-drops=%s",
+            *(payload[key] for key in required),
+        )
+        return jsonify(ok=True)
+
     return app
 
 

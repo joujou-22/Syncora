@@ -13,6 +13,10 @@ final class RtpH264Assembler {
     private int expectedSequence = -1;
     private boolean damaged;
     private boolean fragmentedNal;
+    private long packets;
+    private long missingPackets;
+    private long completedFrames;
+    private long damagedFrames;
 
     RtpH264Assembler(Listener listener) {
         this.listener = listener;
@@ -20,6 +24,7 @@ final class RtpH264Assembler {
 
     void accept(byte[] packet, int length) {
         if (length < 13 || (packet[0] & 0xc0) != 0x80) return;
+        packets++;
         int csrcCount = packet[0] & 0x0f;
         boolean extension = (packet[0] & 0x10) != 0;
         boolean padding = (packet[0] & 0x20) != 0;
@@ -40,7 +45,12 @@ final class RtpH264Assembler {
         if (padding) end -= packet[length - 1] & 0xff;
         if (offset >= end) return;
 
-        if (expectedSequence != -1 && sequence != expectedSequence) damaged = true;
+        if (expectedSequence != -1 && sequence != expectedSequence) {
+            int gap = (sequence - expectedSequence) & 0xffff;
+            // Ignore a late duplicate/reordered packet in the diagnostic count.
+            if (gap < 0x8000) missingPackets += gap;
+            damaged = true;
+        }
         expectedSequence = (sequence + 1) & 0xffff;
         if (timestamp != packetTimestamp) {
             resetFrame();
@@ -61,11 +71,19 @@ final class RtpH264Assembler {
         if (marker) {
             if (!damaged && !fragmentedNal && frame.size() > 0) {
                 listener.onFrame(frame.toByteArray());
+                completedFrames++;
+            } else if (frame.size() > 0) {
+                damagedFrames++;
             }
             resetFrame();
             timestamp = -1;
         }
     }
+
+    long packets() { return packets; }
+    long missingPackets() { return missingPackets; }
+    long completedFrames() { return completedFrames; }
+    long damagedFrames() { return damagedFrames; }
 
     private void appendStapA(byte[] packet, int offset, int end) {
         while (offset + 2 <= end) {
