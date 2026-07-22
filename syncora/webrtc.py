@@ -13,6 +13,7 @@ from aiortc import (
     MediaStreamError,
     RTCConfiguration,
     RTCPeerConnection,
+    RTCRtpSender,
     RTCSessionDescription,
     VideoStreamTrack,
 )
@@ -21,6 +22,7 @@ from av import VideoFrame
 
 from .audio import SystemAudioProducer
 from .capture import FrameProducer
+from .direct_media import DirectH264Track
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_CLOCK_RATE = 90_000
@@ -102,6 +104,8 @@ class WebRTCManager:
         self.audio = audio or SystemAudioProducer()
         self._audio_source = SystemAudioTrack(self.audio)
         self._audio_relay = MediaRelay()
+        self._video_relay = MediaRelay()
+        self._direct_source: DirectH264Track | None = None
         self._peers: set[RTCPeerConnection] = set()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
@@ -124,29 +128,54 @@ class WebRTCManager:
         return future.result(timeout=20)
 
     async def _answer(self, sdp: str, offer_type: str) -> dict[str, str]:
-        self.producer.start()
+        self.producer.start_display()
         self.audio.start()
         peer = RTCPeerConnection(RTCConfiguration(iceServers=[]))
         self._peers.add(peer)
+        video_track: VideoStreamTrack | None = None
 
         @peer.on("connectionstatechange")
         async def connection_state_changed() -> None:
             LOGGER.info("WebRTC connection state: %s", peer.connectionState)
             if peer.connectionState in {"failed", "closed"}:
+                if video_track is not None:
+                    video_track.stop()
                 await peer.close()
                 self._peers.discard(peer)
 
         try:
+            use_direct = DirectH264Track.available(self.producer) and "H264/90000" in sdp
+            if not use_direct:
+                self.producer.start()
+            if use_direct:
+                if self._direct_source is None:
+                    self._direct_source = DirectH264Track(self.producer)
+                video_track = self._video_relay.subscribe(
+                    self._direct_source, buffered=False
+                )
+            else:
+                video_track = ScreenVideoTrack(self.producer)
+            sender = peer.addTrack(video_track)
+            if use_direct:
+                codecs = RTCRtpSender.getCapabilities("video").codecs
+                h264_codecs = [codec for codec in codecs if codec.mimeType == "video/H264"]
+                transceiver = next(
+                    item for item in peer.getTransceivers() if item.sender == sender
+                )
+                transceiver.setCodecPreferences(h264_codecs)
+                LOGGER.info("WebRTC video pipeline: direct PipeWire / VA-API H.264")
+            else:
+                LOGGER.info("WebRTC video encoder: software VP8 fallback")
+            peer.addTrack(self._audio_relay.subscribe(self._audio_source))
             await peer.setRemoteDescription(
                 RTCSessionDescription(sdp=sdp, type=offer_type)
             )
-            peer.addTrack(ScreenVideoTrack(self.producer))
-            LOGGER.info("WebRTC video encoder: software VP8")
-            peer.addTrack(self._audio_relay.subscribe(self._audio_source))
             answer = await peer.createAnswer()
             await peer.setLocalDescription(answer)
             return {"sdp": peer.localDescription.sdp, "type": peer.localDescription.type}
         except Exception:
+            if video_track is not None:
+                video_track.stop()
             self._peers.discard(peer)
             await peer.close()
             raise
@@ -156,6 +185,9 @@ class WebRTCManager:
         peers = list(self._peers)
         self._peers.clear()
         await asyncio.gather(*(peer.close() for peer in peers), return_exceptions=True)
+        if self._direct_source is not None:
+            self._direct_source.stop()
+            self._direct_source = None
         await asyncio.sleep(0.05)
 
     def stop(self) -> None:
@@ -164,6 +196,8 @@ class WebRTCManager:
         future = asyncio.run_coroutine_threadsafe(self._close_all(), self._loop)
         try:
             future.result(timeout=5)
+        except TimeoutError:
+            LOGGER.warning("WebRTC shutdown timed out; forcing media cleanup")
         finally:
             self.audio.stop()
             self._loop.call_soon_threadsafe(self._loop.stop)

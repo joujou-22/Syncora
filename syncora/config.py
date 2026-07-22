@@ -17,6 +17,7 @@ class ConfigError(ValueError):
 class Config:
     host: str = "0.0.0.0"
     port: int = 8080
+    rtsp_port: int = 8554
     fps: float = 15.0
     video_bitrate_mbps: float = 6.0
     jpeg_quality: int = 75
@@ -29,8 +30,10 @@ class Config:
             raise ConfigError("host must not be empty")
         if not 1 <= self.port <= 65535:
             raise ConfigError("port must be between 1 and 65535")
-        if not 1 <= self.fps <= 30:
-            raise ConfigError("fps must be between 1 and 30")
+        if not 1 <= self.rtsp_port <= 65535 or self.rtsp_port == self.port:
+            raise ConfigError("RTSP port must be valid and different from the HTTP port")
+        if not 1 <= self.fps <= 60:
+            raise ConfigError("fps must be between 1 and 60")
         if not 0.5 <= self.video_bitrate_mbps <= 50:
             raise ConfigError("video bitrate must be between 0.5 and 50 Mbps")
         if not 1 <= self.jpeg_quality <= 95:
@@ -71,6 +74,9 @@ def config_from_env(env: Mapping[str, str] | None = None) -> Config:
     return Config(
         host=values.get("SYNCORA_HOST", "0.0.0.0"),
         port=_number("SYNCORA_PORT", values.get("SYNCORA_PORT", "8080"), int),
+        rtsp_port=_number(
+            "SYNCORA_RTSP_PORT", values.get("SYNCORA_RTSP_PORT", "8554"), int
+        ),
         fps=_number("SYNCORA_FPS", values.get("SYNCORA_FPS", "15"), float),
         video_bitrate_mbps=_number(
             "SYNCORA_VIDEO_BITRATE", values.get("SYNCORA_VIDEO_BITRATE", "6"), float
@@ -89,6 +95,10 @@ def parse_config(argv: Sequence[str] | None = None, env: Mapping[str, str] | Non
     parser = argparse.ArgumentParser(description="Share the primary screen on the local network.")
     parser.add_argument("--host", default=defaults.host, help="listening address")
     parser.add_argument("--port", type=int, default=defaults.port, help="TCP port (default: 8080)")
+    parser.add_argument(
+        "--rtsp-port", type=int, default=defaults.rtsp_port,
+        help="native RTSP port (default: 8554)",
+    )
     parser.add_argument("--fps", type=float, default=defaults.fps, help="frames per second")
     parser.add_argument(
         "--video-bitrate",
@@ -110,6 +120,7 @@ def parse_config(argv: Sequence[str] | None = None, env: Mapping[str, str] | Non
     return Config(
         host=args.host,
         port=args.port,
+        rtsp_port=args.rtsp_port,
         fps=args.fps,
         video_bitrate_mbps=args.video_bitrate,
         jpeg_quality=args.quality,

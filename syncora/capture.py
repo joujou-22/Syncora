@@ -39,14 +39,25 @@ class FrameProducer:
         with self._condition:
             return self._error
 
+    @property
+    def direct_pipewire_node(self) -> int | None:
+        """Return the KDE virtual display's node after it has started."""
+        if self._virtual_display is None:
+            return None
+        return self._virtual_display.pipewire_node
+
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        if self._virtual_display:
-            self._virtual_display.start()
+        self.start_display()
         self._thread = threading.Thread(target=self._run, name="syncora-capture", daemon=True)
         self._thread.start()
+
+    def start_display(self) -> None:
+        """Create the virtual output without starting the legacy raw-frame path."""
+        if self._virtual_display:
+            self._virtual_display.start()
 
     def stop(self) -> None:
         self._stop_event.set()

@@ -38,6 +38,7 @@ class ConfigTests(unittest.TestCase):
         for config in (
             Config(port=0),
             Config(fps=0),
+            Config(fps=61),
             Config(video_bitrate_mbps=0),
             Config(jpeg_quality=100),
             Config(scale=2),
